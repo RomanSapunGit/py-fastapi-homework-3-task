@@ -46,7 +46,7 @@ class UserToken(UserBase):
     token: str
 
 
-class PasswordResetRequestSchema(UserToken, UserRegistrationRequestSchema):
+class PasswordResetRequestSchema(UserBase):
     pass
 
 

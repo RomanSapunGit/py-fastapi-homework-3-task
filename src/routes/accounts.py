@@ -28,7 +28,7 @@ from schemas.accounts import (
     PasswordResetCompleteRequestSchema,
     MessageResponseSchema,
     UserActivationRequestSchema,
-    UserRegistrationResponseSchema
+    UserRegistrationResponseSchema, PasswordResetRequestSchema
 )
 from security.passwords import hash_password, verify_password
 from security.token_manager import JWTAuthManager
@@ -83,7 +83,7 @@ async def activate_user(user_token: UserActivationRequestSchema, db: AsyncSessio
     existing_user = await get_user_by_email(db, str(user_token.email))
     if not existing_user:
         raise HTTPException(
-            status_code=409,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"A user with this email {user_token.email} not exist."
         )
     if existing_user.is_active:
@@ -96,7 +96,13 @@ async def activate_user(user_token: UserActivationRequestSchema, db: AsyncSessio
         .where(ActivationTokenModel.user == existing_user)
     )
     db_token = db_token.scalar_one_or_none()
-    if not db_token or db_token.expires_at < datetime.now(timezone.utc):
+    if not db_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired activation token."
+        )
+    db_expires_aware = db_token.expires_at.replace(tzinfo=timezone.utc)
+    if db_expires_aware < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=400,
             detail="Invalid or expired activation token."
@@ -108,7 +114,7 @@ async def activate_user(user_token: UserActivationRequestSchema, db: AsyncSessio
 
 
 @router.post(path="/password-reset/request/")
-async def reset_password(user: UserBase, db: AsyncSession = Depends(get_db)):
+async def reset_password(user: PasswordResetRequestSchema, db: AsyncSession = Depends(get_db)):
     existing_user = await get_user_by_email(db, str(user.email))
     if existing_user and existing_user.is_active:
         db_tokens = await db.execute(
@@ -149,15 +155,15 @@ async def complete_reset_password(
             status_code=400,
             detail="Invalid email or token."
         )
-
-    if db_token.token != token.token or db_token.expires_at < datetime.now(timezone.utc):
+    db_expires_aware = db_token.expires_at.replace(tzinfo=timezone.utc)
+    if db_token.token != token.token or db_expires_aware < datetime.now(timezone.utc):
         await db.delete(db_token)
         await db.commit()
         raise HTTPException(
             status_code=400,
             detail="Invalid email or token."
         )
-    existing_user.password = token.password
+    existing_user._hashed_password = hash_password(token.password)
     await db.delete(db_token)
 
     try:
@@ -214,6 +220,7 @@ async def login(
         db.add(db_refresh_token)
         await db.commit()
     except SQLAlchemyError:
+        await db.rollback()
         raise HTTPException(
             status_code=500,
             detail="An error occurred while processing the request."
