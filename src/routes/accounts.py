@@ -64,7 +64,7 @@ async def register(user: UserRegistrationRequestSchema, db: AsyncSession = Depen
         activation_token = ActivationTokenModel(
             user=db_user,
             token=token,
-            expires_at=(datetime.now() + timedelta(hours=2))
+            expires_at=(datetime.now(timezone.utc) + timedelta(hours=2))
             .replace(tzinfo=timezone.utc),
             user_id=db_user.id
         )
@@ -91,9 +91,12 @@ async def activate_user(user_token: UserActivationRequestSchema, db: AsyncSessio
             status_code=400,
             detail="User account is already active."
         )
-    db_token = await db.execute(select(ActivationTokenModel).where(ActivationTokenModel.user == existing_user))
+    db_token = await db.execute(
+        select(ActivationTokenModel)
+        .where(ActivationTokenModel.user == existing_user)
+    )
     db_token = db_token.scalar_one_or_none()
-    if not db_token or db_token.expires_at < datetime.now():
+    if not db_token or db_token.expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=400,
             detail="Invalid or expired activation token."
@@ -112,13 +115,13 @@ async def reset_password(user: UserBase, db: AsyncSession = Depends(get_db)):
             select(PasswordResetTokenModel)
             .where(PasswordResetTokenModel.user == existing_user)
         )
-        for token in db_tokens.all():
+        for token in db_tokens.scalars().all():
             await db.delete(token)
         token = generate_secure_token(16)
         db_token = PasswordResetTokenModel(
             user=existing_user,
             token=token,
-            expires_at=(datetime.now() + timedelta(hours=2))
+            expires_at=(datetime.now(timezone.utc) + timedelta(hours=2))
             .replace(tzinfo=timezone.utc),
             user_id=existing_user.id
         )
@@ -140,9 +143,14 @@ async def complete_reset_password(
         )
 
     db_token = await db.execute(select(PasswordResetTokenModel).where(PasswordResetTokenModel.user == existing_user))
-    db_token = db_token.scalars().first()
+    db_token = db_token.scalar_one_or_none()
+    if not db_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid email or token."
+        )
 
-    if db_token.token != token.token or db_token.expires_at < datetime.now():
+    if db_token.token != token.token or db_token.expires_at < datetime.now(timezone.utc):
         await db.delete(db_token)
         await db.commit()
         raise HTTPException(

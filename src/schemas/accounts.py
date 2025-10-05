@@ -1,6 +1,5 @@
-from pydantic import BaseModel, EmailStr, field_validator, Field
+from pydantic import BaseModel, EmailStr, field_validator
 import re
-from database import accounts_validators
 
 
 # Write your code here
